@@ -1,0 +1,6 @@
+{
+  "name": "TrạiHeo — Quản Lý Trang Trại Chăn Nuôi",
+  "description": "Hệ thống quản lý trang trại chăn nuôi heo: theo dõi năng suất, chi phí, lợi nhuận, lịch tiêm phòng, luồng sự kiện heo nái, kho vật tư thức ăn và dự báo đàn ngoại tuyến.",
+  "requestFramePermissions": ["notifications", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

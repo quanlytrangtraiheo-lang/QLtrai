@@ -1,0 +1,843 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Helpers
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerified() && request.auth.token.email == 'quanlytrangtraiheo@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isOwner(userId) {
+      return isVerified() && request.auth.uid == userId;
+    }
+
+    function isValidOptStr(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isValidOptNum(data, field, minVal, maxVal) {
+      return !(field in data) || ((data[field] is int || data[field] is float) && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    function isValidMemberList(listVal) {
+      return listVal is list && listVal.size() >= 1 && listVal.size() <= 30 && listVal[0] is string && listVal[0].size() <= 128;
+    }
+
+    function farmExists(farmId) {
+      return exists(/databases/$(database)/documents/farms/$(farmId));
+    }
+
+    function getFarm(farmId) {
+      return get(/databases/$(database)/documents/farms/$(farmId)).data;
+    }
+
+    function isFarmOwner(farmId) {
+      return isVerified() && farmExists(farmId) && getFarm(farmId).ownerId == request.auth.uid;
+    }
+
+    function isFarmStaff(farmId) {
+      return isVerified()
+        && farmExists(farmId)
+        && exists(/databases/$(database)/documents/farms/$(farmId)/staff/$(request.auth.uid))
+        && get(/databases/$(database)/documents/farms/$(farmId)/staff/$(request.auth.uid)).data.active == true;
+    }
+
+    function getStaffRole(farmId) {
+      return get(/databases/$(database)/documents/farms/$(farmId)/staff/$(request.auth.uid)).data.role;
+    }
+
+    function isFarmManagerOrOwner(farmId) {
+      return isAdmin() || isFarmOwner(farmId) || (isFarmStaff(farmId) && getStaffRole(farmId) in ['admin', 'manager']);
+    }
+
+    function isFarmMember(farmId) {
+      return isAdmin() || isFarmOwner(farmId) || isFarmStaff(farmId);
+    }
+
+    function isListAuthorized(data) {
+      return isVerified() && (
+        isBootstrappedAdmin()
+        || data.farmOwnerId == request.auth.uid
+        || (data.memberUids is list && request.auth.uid in data.memberUids)
+      );
+    }
+
+    function hasImmutableBaseFields() {
+      return incoming().id == existing().id
+        && incoming().farmId == existing().farmId
+        && incoming().farmOwnerId == existing().farmOwnerId
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+    }
+
+    // =========================================================================
+    // Entity Validators
+    // =========================================================================
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'activeFarmId', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() <= 120
+        && isValidOptStr(data, 'activeFarmId', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFarm(data) {
+      return data.keys().hasAll(['id', 'name', 'ownerId', 'ownerEmail', 'memberUids', 'gestationDays', 'weaningDays', 'postWeaningEstrusDays', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'address', 'phone', 'ownerId', 'ownerEmail', 'memberUids', 'capacity', 'biosecurityLevel', 'gestationDays', 'weaningDays', 'postWeaningEstrusDays', 'lowStockThresholdPct', 'autoBackupEnabled', 'lastBackupDate', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && isValidId(data.ownerId)
+        && data.ownerEmail is string && data.ownerEmail.size() <= 254
+        && isValidMemberList(data.memberUids)
+        && isValidOptStr(data, 'address', 300)
+        && isValidOptStr(data, 'phone', 40)
+        && isValidOptNum(data, 'capacity', 0, 1000000)
+        && isValidOptStr(data, 'biosecurityLevel', 60)
+        && (data.gestationDays is int || data.gestationDays is float) && data.gestationDays >= 100 && data.gestationDays <= 130
+        && (data.weaningDays is int || data.weaningDays is float) && data.weaningDays >= 10 && data.weaningDays <= 60
+        && (data.postWeaningEstrusDays is int || data.postWeaningEstrusDays is float) && data.postWeaningEstrusDays >= 1 && data.postWeaningEstrusDays <= 30
+        && isValidOptNum(data, 'lowStockThresholdPct', 1, 100)
+        && (!('autoBackupEnabled' in data) || data.autoBackupEnabled is bool)
+        && isValidOptStr(data, 'lastBackupDate', 32)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStaffMember(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'email', 'role', 'active', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'uid', 'name', 'email', 'phone', 'role', 'active', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.farmId)
+        && isValidId(data.farmOwnerId)
+        && isValidMemberList(data.memberUids)
+        && isValidOptStr(data, 'uid', 128)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() <= 254
+        && isValidOptStr(data, 'phone', 40)
+        && data.role in ['admin', 'manager', 'vet', 'worker']
+        && data.active is bool
+        && isValidId(data.createdBy)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBarn(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'code', 'name', 'barnType', 'capacity', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'code', 'name', 'barnType', 'capacity', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.barnType in ['farrowing', 'gestation', 'nursery', 'fattening', 'quarantine']
+        && (data.capacity is int || data.capacity is float) && data.capacity >= 0 && data.capacity <= 100000
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidBreed(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'avgLitterSize', 'dailyGainGrams', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'origin', 'avgLitterSize', 'dailyGainGrams', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && isValidOptStr(data, 'origin', 120)
+        && (data.avgLitterSize is int || data.avgLitterSize is float) && data.avgLitterSize >= 0 && data.avgLitterSize <= 40
+        && (data.dailyGainGrams is int || data.dailyGainGrams is float) && data.dailyGainGrams >= 0 && data.dailyGainGrams <= 3000
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidVaccine(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'targetGroup', 'recommendedWeek', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'targetGroup', 'recommendedWeek', 'dosage', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 140
+        && data.targetGroup in ['sow', 'piglet', 'fattening', 'all']
+        && (data.recommendedWeek is int || data.recommendedWeek is float) && data.recommendedWeek >= 0 && data.recommendedWeek <= 104
+        && isValidOptStr(data, 'dosage', 80)
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidFeedType(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'stage', 'kgPerHeadPerDay', 'unitPrice', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'stage', 'proteinPct', 'kgPerHeadPerDay', 'unitPrice', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 140
+        && data.stage in ['prestarter', 'starter', 'grower', 'finisher', 'gestation', 'lactation']
+        && isValidOptNum(data, 'proteinPct', 0, 100)
+        && (data.kgPerHeadPerDay is int || data.kgPerHeadPerDay is float) && data.kgPerHeadPerDay >= 0 && data.kgPerHeadPerDay <= 20
+        && (data.unitPrice is int || data.unitPrice is float) && data.unitPrice >= 0 && data.unitPrice <= 100000000
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidFeedRation(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'pigCategory', 'weekNumber', 'feedName', 'kgPerHeadPerDay', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'pigCategory', 'weekNumber', 'feedTypeId', 'feedName', 'kgPerHeadPerDay', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.pigCategory in ['fattening', 'sow_gestation', 'sow_lactation', 'sow_waiting']
+        && (data.weekNumber is int || data.weekNumber is float) && data.weekNumber >= 0 && data.weekNumber <= 52
+        && isValidOptStr(data, 'feedTypeId', 128)
+        && data.feedName is string && data.feedName.size() >= 1 && data.feedName.size() <= 140
+        && (data.kgPerHeadPerDay is int || data.kgPerHeadPerDay is float) && data.kgPerHeadPerDay >= 0 && data.kgPerHeadPerDay <= 20
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidVaccinationProgram(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'pigCategory', 'weekNumber', 'vaccineName', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'pigCategory', 'weekNumber', 'vaccineName', 'diseaseTarget', 'dosage', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.pigCategory in ['fattening', 'sow_gestation', 'sow_lactation', 'sow_waiting']
+        && (data.weekNumber is int || data.weekNumber is float) && data.weekNumber >= 0 && data.weekNumber <= 52
+        && data.vaccineName is string && data.vaccineName.size() >= 1 && data.vaccineName.size() <= 140
+        && isValidOptStr(data, 'diseaseTarget', 140)
+        && isValidOptStr(data, 'dosage', 80)
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidSow(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'earTag', 'status', 'healthStatus', 'parity', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'earTag', 'name', 'breedName', 'barnName', 'entryDate', 'parity', 'status', 'healthStatus', 'lastBreedingDate', 'expectedFarrowingDate', 'lastFarrowingDate', 'expectedWeaningDate', 'expectedNextBreedingDate', 'purchaseCost', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.earTag is string && data.earTag.size() >= 1 && data.earTag.size() <= 60
+        && isValidOptStr(data, 'name', 120)
+        && isValidOptStr(data, 'breedName', 100)
+        && isValidOptStr(data, 'barnName', 100)
+        && isValidOptStr(data, 'entryDate', 32)
+        && (data.parity is int || data.parity is float) && data.parity >= 0 && data.parity <= 30
+        && data.status in ['empty', 'bred', 'pregnant', 'farrowing', 'lactating', 'culled', 'sold']
+        && data.healthStatus in ['healthy', 'monitoring', 'sick', 'quarantine']
+        && isValidOptStr(data, 'lastBreedingDate', 32)
+        && isValidOptStr(data, 'expectedFarrowingDate', 32)
+        && isValidOptStr(data, 'lastFarrowingDate', 32)
+        && isValidOptStr(data, 'expectedWeaningDate', 32)
+        && isValidOptStr(data, 'expectedNextBreedingDate', 32)
+        && isValidOptNum(data, 'purchaseCost', 0, 10000000000)
+        && isValidOptStr(data, 'notes', 1000)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidSowEvent(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'sowId', 'sowEarTag', 'eventType', 'scheduledDate', 'status', 'autoGenerated', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'sowId', 'sowEarTag', 'eventType', 'scheduledDate', 'actualDate', 'status', 'autoGenerated', 'boarTag', 'liveBorn', 'stillborn', 'weanedCount', 'avgWeightKg', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && isValidId(data.sowId)
+        && data.sowEarTag is string && data.sowEarTag.size() >= 1 && data.sowEarTag.size() <= 60
+        && data.eventType in ['breeding', 'pregnancy_check', 'farrowing', 'weaning', 'next_breeding', 'vaccination', 'health_check']
+        && data.scheduledDate is string && data.scheduledDate.size() <= 32
+        && isValidOptStr(data, 'actualDate', 32)
+        && data.status in ['pending', 'completed', 'cancelled']
+        && data.autoGenerated is bool
+        && isValidOptStr(data, 'boarTag', 60)
+        && isValidOptNum(data, 'liveBorn', 0, 40)
+        && isValidOptNum(data, 'stillborn', 0, 40)
+        && isValidOptNum(data, 'weanedCount', 0, 40)
+        && isValidOptNum(data, 'avgWeightKg', 0, 500)
+        && isValidOptStr(data, 'notes', 800)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidPigGroup(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'batchCode', 'name', 'entryDate', 'birthDate', 'initialCount', 'currentCount', 'status', 'healthStatus', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'batchCode', 'name', 'breedName', 'barnName', 'entryDate', 'birthDate', 'initialCount', 'currentCount', 'mortalityCount', 'soldCount', 'avgEntryWeightKg', 'currentAvgWeightKg', 'entryCostTotal', 'feedCostTotal', 'medCostTotal', 'otherCostTotal', 'revenueTotal', 'status', 'healthStatus', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.batchCode is string && data.batchCode.size() >= 1 && data.batchCode.size() <= 60
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 140
+        && isValidOptStr(data, 'breedName', 100)
+        && isValidOptStr(data, 'barnName', 100)
+        && data.entryDate is string && data.entryDate.size() <= 32
+        && data.birthDate is string && data.birthDate.size() <= 32
+        && (data.initialCount is int || data.initialCount is float) && data.initialCount >= 0 && data.initialCount <= 100000
+        && (data.currentCount is int || data.currentCount is float) && data.currentCount >= 0 && data.currentCount <= 100000
+        && isValidOptNum(data, 'mortalityCount', 0, 100000)
+        && isValidOptNum(data, 'soldCount', 0, 100000)
+        && isValidOptNum(data, 'avgEntryWeightKg', 0, 500)
+        && isValidOptNum(data, 'currentAvgWeightKg', 0, 500)
+        && isValidOptNum(data, 'entryCostTotal', 0, 100000000000)
+        && isValidOptNum(data, 'feedCostTotal', 0, 100000000000)
+        && isValidOptNum(data, 'medCostTotal', 0, 100000000000)
+        && isValidOptNum(data, 'otherCostTotal', 0, 100000000000)
+        && isValidOptNum(data, 'revenueTotal', 0, 100000000000)
+        && data.status in ['active', 'sold_out']
+        && data.healthStatus in ['healthy', 'monitoring', 'sick']
+        && isValidOptStr(data, 'notes', 1000)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidHealthLog(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'targetType', 'targetId', 'targetLabel', 'logType', 'title', 'severity', 'date', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'targetType', 'targetId', 'targetLabel', 'logType', 'title', 'vaccineName', 'symptoms', 'severity', 'medicineUsed', 'dosage', 'cost', 'date', 'nextDueDate', 'status', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.targetType in ['sow', 'group']
+        && isValidId(data.targetId)
+        && data.targetLabel is string && data.targetLabel.size() <= 140
+        && data.logType in ['vaccination', 'symptom', 'treatment', 'checkup']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 180
+        && isValidOptStr(data, 'vaccineName', 140)
+        && isValidOptStr(data, 'symptoms', 800)
+        && data.severity in ['normal', 'warning', 'critical']
+        && isValidOptStr(data, 'medicineUsed', 140)
+        && isValidOptStr(data, 'dosage', 100)
+        && isValidOptNum(data, 'cost', 0, 10000000000)
+        && data.date is string && data.date.size() <= 32
+        && isValidOptStr(data, 'nextDueDate', 32)
+        && data.status in ['scheduled', 'completed', 'monitoring', 'resolved']
+        && isValidOptStr(data, 'notes', 800)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'name', 'category', 'unit', 'quantity', 'minThreshold', 'unitCost', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'sku', 'name', 'category', 'unit', 'quantity', 'minThreshold', 'unitCost', 'supplier', 'expiryDate', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && isValidOptStr(data, 'sku', 60)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && data.category in ['feed', 'medicine', 'vaccine', 'supply']
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 40
+        && (data.quantity is int || data.quantity is float) && data.quantity >= 0 && data.quantity <= 100000000
+        && (data.minThreshold is int || data.minThreshold is float) && data.minThreshold >= 0 && data.minThreshold <= 100000000
+        && (data.unitCost is int || data.unitCost is float) && data.unitCost >= 0 && data.unitCost <= 1000000000
+        && isValidOptStr(data, 'supplier', 140)
+        && isValidOptStr(data, 'expiryDate', 32)
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidInventoryTx(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'itemId', 'itemName', 'category', 'txType', 'quantity', 'totalCost', 'date', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'itemId', 'itemName', 'category', 'txType', 'quantity', 'unitCost', 'totalCost', 'targetGroupId', 'targetLabel', 'date', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && isValidId(data.itemId)
+        && data.itemName is string && data.itemName.size() <= 160
+        && data.category in ['feed', 'medicine', 'vaccine', 'supply']
+        && data.txType in ['in', 'out']
+        && (data.quantity is int || data.quantity is float) && data.quantity > 0 && data.quantity <= 100000000
+        && isValidOptNum(data, 'unitCost', 0, 1000000000)
+        && (data.totalCost is int || data.totalCost is float) && data.totalCost >= 0 && data.totalCost <= 100000000000
+        && isValidOptStr(data, 'targetGroupId', 128)
+        && isValidOptStr(data, 'targetLabel', 140)
+        && data.date is string && data.date.size() <= 32
+        && isValidOptStr(data, 'notes', 500)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidFinancialTx(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'txType', 'direction', 'date', 'amount', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'txType', 'direction', 'date', 'groupId', 'groupLabel', 'headCount', 'totalWeightKg', 'unitPrice', 'amount', 'partnerName', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.txType in ['sale_fattening', 'sale_breeding', 'purchase_breeding', 'feed_expense', 'medicine_expense', 'labor_expense', 'utility_expense', 'other_income', 'other_expense']
+        && data.direction in ['income', 'expense']
+        && data.date is string && data.date.size() <= 32
+        && isValidOptStr(data, 'groupId', 128)
+        && isValidOptStr(data, 'groupLabel', 140)
+        && isValidOptNum(data, 'headCount', 0, 100000)
+        && isValidOptNum(data, 'totalWeightKg', 0, 10000000)
+        && isValidOptNum(data, 'unitPrice', 0, 10000000000)
+        && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 1000000000000
+        && isValidOptStr(data, 'partnerName', 160)
+        && isValidOptStr(data, 'notes', 600)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidCloudBackup(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'dateKey', 'backupType', 'summaryCounts', 'snapshot', 'createdBy', 'createdAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'dateKey', 'backupType', 'summaryCounts', 'snapshot', 'createdBy', 'createdAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.dateKey is string && data.dateKey.size() <= 32
+        && data.backupType in ['auto_daily', 'manual']
+        && data.summaryCounts is map
+        && data.snapshot is map
+        && isValidId(data.createdBy) && data.createdAt is timestamp;
+    }
+
+    function isValidJournalEntry(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'date', 'category', 'severity', 'inputMethod', 'content', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'date', 'timeLabel', 'category', 'severity', 'inputMethod', 'content', 'authorName', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && data.date is string && data.date.size() <= 32
+        && isValidOptStr(data, 'timeLabel', 16)
+        && data.category in ['health', 'weather', 'feed', 'hygiene', 'other']
+        && data.severity in ['normal', 'warning', 'critical']
+        && data.inputMethod in ['voice', 'text']
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 1000
+        && isValidOptStr(data, 'authorName', 120)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function isValidPigLitter(data) {
+      return data.keys().hasAll(['id', 'farmId', 'farmOwnerId', 'memberUids', 'sowId', 'sowEarTag', 'litterCode', 'parity', 'farrowingDate', 'liveBorn', 'currentCount', 'healthStatus', 'status', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'farmId', 'farmOwnerId', 'memberUids', 'sowId', 'sowEarTag', 'litterCode', 'parity', 'barnName', 'farrowingDate', 'expectedWeaningDate', 'liveBorn', 'currentCount', 'mortalityCount', 'avgWeightKg', 'healthStatus', 'status', 'weanedDate', 'weanedCount', 'weanedGroupId', 'notes', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && isValidId(data.farmId) && isValidId(data.farmOwnerId) && isValidMemberList(data.memberUids)
+        && isValidId(data.sowId)
+        && data.sowEarTag is string && data.sowEarTag.size() >= 1 && data.sowEarTag.size() <= 60
+        && data.litterCode is string && data.litterCode.size() >= 1 && data.litterCode.size() <= 60
+        && (data.parity is int || data.parity is float) && data.parity >= 0 && data.parity <= 30
+        && isValidOptStr(data, 'barnName', 100)
+        && data.farrowingDate is string && data.farrowingDate.size() <= 32
+        && isValidOptStr(data, 'expectedWeaningDate', 32)
+        && (data.liveBorn is int || data.liveBorn is float) && data.liveBorn >= 0 && data.liveBorn <= 40
+        && (data.currentCount is int || data.currentCount is float) && data.currentCount >= 0 && data.currentCount <= 40
+        && isValidOptNum(data, 'mortalityCount', 0, 40)
+        && isValidOptNum(data, 'avgWeightKg', 0, 100)
+        && data.healthStatus in ['healthy', 'monitoring', 'sick']
+        && data.status in ['suckling', 'weaned']
+        && isValidOptStr(data, 'weanedDate', 32)
+        && isValidOptNum(data, 'weanedCount', 0, 40)
+        && isValidOptStr(data, 'weanedGroupId', 128)
+        && isValidOptStr(data, 'notes', 800)
+        && isValidId(data.createdBy) && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collections
+    // =========================================================================
+    match /admins/{adminId} {
+      allow get: if isVerified() && (request.auth.uid == adminId || isBootstrappedAdmin());
+      allow list, create, update, delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isVerified() && (resource.data.uid == request.auth.uid || isBootstrappedAdmin());
+      allow create: if isValidId(userId) && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isValidUserProfile(incoming())
+        && (isOwner(userId) || isAdmin())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'activeFarmId', 'updatedAt']);
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
+    }
+
+    match /farms/{farmId} {
+      allow get: if isValidId(farmId) && isVerified() && (
+        isAdmin()
+        || existing().ownerId == request.auth.uid
+        || request.auth.uid in existing().memberUids
+      );
+      allow list: if isVerified() && (
+        isBootstrappedAdmin()
+        || resource.data.ownerId == request.auth.uid
+        || (resource.data.memberUids is list && request.auth.uid in resource.data.memberUids)
+      );
+      allow create: if isValidId(farmId) && isVerified()
+        && isValidFarm(incoming())
+        && incoming().id == farmId
+        && incoming().ownerId == request.auth.uid
+        && request.auth.uid in incoming().memberUids
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(farmId) && isVerified()
+        && isValidFarm(incoming())
+        && (isAdmin() || existing().ownerId == request.auth.uid)
+        && incoming().id == existing().id
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'address', 'phone', 'memberUids', 'capacity', 'biosecurityLevel',
+            'gestationDays', 'weaningDays', 'postWeaningEstrusDays',
+            'lowStockThresholdPct', 'autoBackupEnabled', 'lastBackupDate', 'updatedAt'
+          ])
+        );
+      allow delete: if isValidId(farmId) && isVerified() && (isAdmin() || existing().ownerId == request.auth.uid);
+
+      // Staff RBAC subcollection
+      match /staff/{staffId} {
+        allow get: if isValidId(farmId) && isValidId(staffId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(staffId) && isVerified()
+          && isValidStaffMember(incoming())
+          && incoming().farmId == farmId
+          && incoming().id == staffId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && farmExists(farmId)
+          && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && (isFarmManagerOrOwner(farmId) || (staffId == request.auth.uid && incoming().role == 'admin' && getFarm(farmId).ownerId == request.auth.uid));
+        allow update: if isValidId(farmId) && isValidId(staffId) && isVerified()
+          && isValidStaffMember(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['uid', 'name', 'email', 'phone', 'role', 'active', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(staffId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Barns
+      match /barns/{barnId} {
+        allow get: if isValidId(farmId) && isValidId(barnId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(barnId) && isVerified()
+          && isValidBarn(incoming())
+          && incoming().farmId == farmId && incoming().id == barnId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmManagerOrOwner(farmId);
+        allow update: if isValidId(farmId) && isValidId(barnId) && isVerified()
+          && isValidBarn(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['code', 'name', 'barnType', 'capacity', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(barnId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Breeds
+      match /breeds/{breedId} {
+        allow get: if isValidId(farmId) && isValidId(breedId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(breedId) && isVerified()
+          && isValidBreed(incoming())
+          && incoming().farmId == farmId && incoming().id == breedId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmManagerOrOwner(farmId);
+        allow update: if isValidId(farmId) && isValidId(breedId) && isVerified()
+          && isValidBreed(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'origin', 'avgLitterSize', 'dailyGainGrams', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(breedId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Vaccines
+      match /vaccines/{vaccineId} {
+        allow get: if isValidId(farmId) && isValidId(vaccineId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(vaccineId) && isVerified()
+          && isValidVaccine(incoming())
+          && incoming().farmId == farmId && incoming().id == vaccineId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(vaccineId) && isVerified()
+          && isValidVaccine(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'targetGroup', 'recommendedWeek', 'dosage', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(vaccineId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Feed Types
+      match /feedTypes/{feedTypeId} {
+        allow get: if isValidId(farmId) && isValidId(feedTypeId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(feedTypeId) && isVerified()
+          && isValidFeedType(incoming())
+          && incoming().farmId == farmId && incoming().id == feedTypeId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmManagerOrOwner(farmId);
+        allow update: if isValidId(farmId) && isValidId(feedTypeId) && isVerified()
+          && isValidFeedType(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'stage', 'proteinPct', 'kgPerHeadPerDay', 'unitPrice', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(feedTypeId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Weekly Feed Rations
+      match /feedRations/{rationId} {
+        allow get: if isValidId(farmId) && isValidId(rationId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(rationId) && isVerified()
+          && isValidFeedRation(incoming())
+          && incoming().farmId == farmId && incoming().id == rationId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmManagerOrOwner(farmId);
+        allow update: if isValidId(farmId) && isValidId(rationId) && isVerified()
+          && isValidFeedRation(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['pigCategory', 'weekNumber', 'feedTypeId', 'feedName', 'kgPerHeadPerDay', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(rationId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Vaccination Programs
+      match /vaccinationPrograms/{programId} {
+        allow get: if isValidId(farmId) && isValidId(programId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(programId) && isVerified()
+          && isValidVaccinationProgram(incoming())
+          && incoming().farmId == farmId && incoming().id == programId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(programId) && isVerified()
+          && isValidVaccinationProgram(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['pigCategory', 'weekNumber', 'vaccineName', 'diseaseTarget', 'dosage', 'notes', 'memberUids', 'updatedAt']);
+        allow delete: if isValidId(farmId) && isValidId(programId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Sows
+      match /sows/{sowId} {
+        allow get: if isValidId(farmId) && isValidId(sowId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(sowId) && isVerified()
+          && isValidSow(incoming())
+          && incoming().farmId == farmId && incoming().id == sowId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(sowId) && isVerified()
+          && isValidSow(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && (
+            (isFarmManagerOrOwner(farmId) && incoming().diff(existing()).affectedKeys().hasOnly([
+              'earTag', 'name', 'breedName', 'barnName', 'entryDate', 'parity', 'status',
+              'healthStatus', 'lastBreedingDate', 'expectedFarrowingDate', 'lastFarrowingDate',
+              'expectedWeaningDate', 'expectedNextBreedingDate', 'purchaseCost', 'notes', 'memberUids', 'updatedAt'
+            ]))
+            || incoming().diff(existing()).affectedKeys().hasOnly([
+              'parity', 'status', 'healthStatus', 'lastBreedingDate', 'expectedFarrowingDate',
+              'lastFarrowingDate', 'expectedWeaningDate', 'expectedNextBreedingDate', 'notes', 'updatedAt'
+            ])
+          );
+        allow delete: if isValidId(farmId) && isValidId(sowId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Sow Events
+      match /sowEvents/{eventId} {
+        allow get: if isValidId(farmId) && isValidId(eventId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(eventId) && isVerified()
+          && isValidSowEvent(incoming())
+          && incoming().farmId == farmId && incoming().id == eventId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(eventId) && isVerified()
+          && isValidSowEvent(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && (existing().status != 'completed' || isFarmManagerOrOwner(farmId))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'scheduledDate', 'actualDate', 'status', 'boarTag', 'liveBorn', 'stillborn',
+            'weanedCount', 'avgWeightKg', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(eventId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Pig Groups (Fattening)
+      match /pigGroups/{groupId} {
+        allow get: if isValidId(farmId) && isValidId(groupId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(groupId) && isVerified()
+          && isValidPigGroup(incoming())
+          && incoming().farmId == farmId && incoming().id == groupId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(groupId) && isVerified()
+          && isValidPigGroup(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && (existing().status != 'sold_out' || isFarmManagerOrOwner(farmId))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'breedName', 'barnName', 'currentCount', 'mortalityCount', 'soldCount',
+            'currentAvgWeightKg', 'entryCostTotal', 'feedCostTotal', 'medCostTotal',
+            'otherCostTotal', 'revenueTotal', 'status', 'healthStatus', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(groupId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Health Logs
+      match /healthLogs/{logId} {
+        allow get: if isValidId(farmId) && isValidId(logId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(logId) && isVerified()
+          && isValidHealthLog(incoming())
+          && incoming().farmId == farmId && incoming().id == logId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(logId) && isVerified()
+          && isValidHealthLog(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'vaccineName', 'symptoms', 'severity', 'medicineUsed', 'dosage',
+            'cost', 'date', 'nextDueDate', 'status', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(logId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Inventory Items
+      match /inventoryItems/{itemId} {
+        allow get: if isValidId(farmId) && isValidId(itemId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(itemId) && isVerified()
+          && isValidInventoryItem(incoming())
+          && incoming().farmId == farmId && incoming().id == itemId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(itemId) && isVerified()
+          && isValidInventoryItem(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'sku', 'name', 'category', 'unit', 'quantity', 'minThreshold', 'unitCost',
+            'supplier', 'expiryDate', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(itemId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Inventory Transactions
+      match /inventoryTx/{txId} {
+        allow get: if isValidId(farmId) && isValidId(txId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(txId) && isVerified()
+          && isValidInventoryTx(incoming())
+          && incoming().farmId == farmId && incoming().id == txId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if false;
+        allow delete: if isValidId(farmId) && isValidId(txId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Financial Transactions
+      match /transactions/{txId} {
+        allow get: if isValidId(farmId) && isValidId(txId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(txId) && isVerified()
+          && isValidFinancialTx(incoming())
+          && incoming().farmId == farmId && incoming().id == txId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(txId) && isVerified()
+          && isValidFinancialTx(incoming())
+          && isFarmManagerOrOwner(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'date', 'groupId', 'groupLabel', 'headCount', 'totalWeightKg',
+            'unitPrice', 'amount', 'partnerName', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(txId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Cloud Backups
+      match /backups/{backupId} {
+        allow get: if isValidId(farmId) && isValidId(backupId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(backupId) && isVerified()
+          && isValidCloudBackup(incoming())
+          && incoming().farmId == farmId && incoming().id == backupId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if false;
+        allow delete: if isValidId(farmId) && isValidId(backupId) && isFarmManagerOrOwner(farmId);
+      }
+
+      // Daily Farm Journal Entries
+      match /journalEntries/{entryId} {
+        allow get: if isValidId(farmId) && isValidId(entryId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(entryId) && isVerified()
+          && isValidJournalEntry(incoming())
+          && incoming().farmId == farmId && incoming().id == entryId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(entryId) && isVerified()
+          && isValidJournalEntry(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'date', 'timeLabel', 'category', 'severity', 'inputMethod',
+            'content', 'authorName', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(entryId) && (isFarmManagerOrOwner(farmId) || existing().createdBy == request.auth.uid);
+      }
+
+      // Suckling Piglet Litters per Sow
+      match /pigLitters/{litterId} {
+        allow get: if isValidId(farmId) && isValidId(litterId) && isFarmMember(farmId);
+        allow list: if isListAuthorized(resource.data);
+        allow create: if isValidId(farmId) && isValidId(litterId) && isVerified()
+          && isValidPigLitter(incoming())
+          && incoming().farmId == farmId && incoming().id == litterId
+          && incoming().createdBy == request.auth.uid
+          && incoming().createdAt == request.time && incoming().updatedAt == request.time
+          && farmExists(farmId) && incoming().farmOwnerId == getFarm(farmId).ownerId
+          && isFarmMember(farmId);
+        allow update: if isValidId(farmId) && isValidId(litterId) && isVerified()
+          && isValidPigLitter(incoming())
+          && isFarmMember(farmId)
+          && hasImmutableBaseFields()
+          && (existing().status != 'weaned' || isFarmManagerOrOwner(farmId))
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'barnName', 'expectedWeaningDate', 'liveBorn', 'currentCount', 'mortalityCount',
+            'avgWeightKg', 'healthStatus', 'status', 'weanedDate', 'weanedCount',
+            'weanedGroupId', 'notes', 'memberUids', 'updatedAt'
+          ]);
+        allow delete: if isValidId(farmId) && isValidId(litterId) && isFarmManagerOrOwner(farmId);
+      }
+    }
+  }
+}

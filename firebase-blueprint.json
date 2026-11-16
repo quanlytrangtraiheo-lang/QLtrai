@@ -1,0 +1,520 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile storing active farm selection and UI preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "activeFarmId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "createdAt", "updatedAt"]
+    },
+    "Farm": {
+      "title": "Farm",
+      "description": "Master farm record containing farm metadata, technical parameters, and bounded member UIDs for query authorization.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "address": { "type": "string", "maxLength": 300 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "ownerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ownerEmail": { "type": "string", "maxLength": 254 },
+        "memberUids": { "type": "array", "description": "Bounded list (max 30) of authorized staff UIDs" },
+        "capacity": { "type": "number" },
+        "biosecurityLevel": { "type": "string", "maxLength": 60 },
+        "gestationDays": { "type": "number" },
+        "weaningDays": { "type": "number" },
+        "postWeaningEstrusDays": { "type": "number" },
+        "lowStockThresholdPct": { "type": "number" },
+        "autoBackupEnabled": { "type": "boolean" },
+        "lastBackupDate": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "ownerId", "ownerEmail", "memberUids", "gestationDays", "weaningDays", "postWeaningEstrusDays", "createdAt", "updatedAt"]
+    },
+    "StaffMember": {
+      "title": "StaffMember",
+      "description": "Farm employee and role-based access control assignment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmOwnerId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 254 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "role": { "type": "string", "enum": ["admin", "manager", "vet", "worker"] },
+        "active": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "name", "email", "role", "active", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Barn": {
+      "title": "Barn",
+      "description": "Barn or pen facility configuration.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "code": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "barnType": { "type": "string", "enum": ["farrowing", "gestation", "nursery", "fattening", "quarantine"] },
+        "capacity": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "code", "name", "barnType", "capacity", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Breed": {
+      "title": "Breed",
+      "description": "Pig breed technical specification.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "origin": { "type": "string", "maxLength": 120 },
+        "avgLitterSize": { "type": "number" },
+        "dailyGainGrams": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "name", "avgLitterSize", "dailyGainGrams", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Vaccine": {
+      "title": "Vaccine",
+      "description": "Vaccine protocol definition.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "targetGroup": { "type": "string", "enum": ["sow", "piglet", "fattening", "all"] },
+        "recommendedWeek": { "type": "number" },
+        "dosage": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "name", "targetGroup", "recommendedWeek", "createdBy", "createdAt", "updatedAt"]
+    },
+    "FeedType": {
+      "title": "FeedType",
+      "description": "Feed ration specification by growth stage.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "stage": { "type": "string", "enum": ["prestarter", "starter", "grower", "finisher", "gestation", "lactation"] },
+        "proteinPct": { "type": "number" },
+        "kgPerHeadPerDay": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "name", "stage", "kgPerHeadPerDay", "unitPrice", "createdBy", "createdAt", "updatedAt"]
+    },
+    "FeedRation": {
+      "title": "FeedRation",
+      "description": "Weekly feed ration specification per pig category (fattening week, sow gestation week, sow lactation week, or waiting sow).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "pigCategory": { "type": "string", "enum": ["fattening", "sow_gestation", "sow_lactation", "sow_waiting"] },
+        "weekNumber": { "type": "number" },
+        "feedTypeId": { "type": "string", "maxLength": 128 },
+        "feedName": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "kgPerHeadPerDay": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "pigCategory", "weekNumber", "feedName", "kgPerHeadPerDay", "createdBy", "createdAt", "updatedAt"]
+    },
+    "VaccinationProgram": {
+      "title": "VaccinationProgram",
+      "description": "Vaccination schedule template ordered by pig category and week of age or reproductive cycle.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "pigCategory": { "type": "string", "enum": ["fattening", "sow_gestation", "sow_lactation", "sow_waiting"] },
+        "weekNumber": { "type": "number" },
+        "vaccineName": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "diseaseTarget": { "type": "string", "maxLength": 140 },
+        "dosage": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "pigCategory", "weekNumber", "vaccineName", "createdBy", "createdAt", "updatedAt"]
+    },
+    "Sow": {
+      "title": "Sow",
+      "description": "Individual breeding sow record with reproductive cycle tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "earTag": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "name": { "type": "string", "maxLength": 120 },
+        "breedName": { "type": "string", "maxLength": 100 },
+        "barnName": { "type": "string", "maxLength": 100 },
+        "entryDate": { "type": "string", "maxLength": 32 },
+        "parity": { "type": "number" },
+        "status": { "type": "string", "enum": ["empty", "bred", "pregnant", "farrowing", "lactating", "culled", "sold"] },
+        "healthStatus": { "type": "string", "enum": ["healthy", "monitoring", "sick", "quarantine"] },
+        "lastBreedingDate": { "type": "string", "maxLength": 32 },
+        "expectedFarrowingDate": { "type": "string", "maxLength": 32 },
+        "lastFarrowingDate": { "type": "string", "maxLength": 32 },
+        "expectedWeaningDate": { "type": "string", "maxLength": 32 },
+        "expectedNextBreedingDate": { "type": "string", "maxLength": 32 },
+        "purchaseCost": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "earTag", "status", "healthStatus", "parity", "createdBy", "createdAt", "updatedAt"]
+    },
+    "SowEvent": {
+      "title": "SowEvent",
+      "description": "Sow reproductive workflow event (Breeding -> Farrowing -> Weaning -> Next Breeding).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "sowId": { "type": "string", "maxLength": 128 },
+        "sowEarTag": { "type": "string", "maxLength": 60 },
+        "eventType": { "type": "string", "enum": ["breeding", "pregnancy_check", "farrowing", "weaning", "next_breeding", "vaccination", "health_check"] },
+        "scheduledDate": { "type": "string", "maxLength": 32 },
+        "actualDate": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["pending", "completed", "cancelled"] },
+        "autoGenerated": { "type": "boolean" },
+        "boarTag": { "type": "string", "maxLength": 60 },
+        "liveBorn": { "type": "number" },
+        "stillborn": { "type": "number" },
+        "weanedCount": { "type": "number" },
+        "avgWeightKg": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 800 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "sowId", "sowEarTag", "eventType", "scheduledDate", "status", "autoGenerated", "createdBy", "createdAt", "updatedAt"]
+    },
+    "PigGroup": {
+      "title": "PigGroup",
+      "description": "Fattening or nursery pig batch with productivity and cost tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "batchCode": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "breedName": { "type": "string", "maxLength": 100 },
+        "barnName": { "type": "string", "maxLength": 100 },
+        "entryDate": { "type": "string", "maxLength": 32 },
+        "birthDate": { "type": "string", "maxLength": 32 },
+        "initialCount": { "type": "number" },
+        "currentCount": { "type": "number" },
+        "mortalityCount": { "type": "number" },
+        "soldCount": { "type": "number" },
+        "avgEntryWeightKg": { "type": "number" },
+        "currentAvgWeightKg": { "type": "number" },
+        "entryCostTotal": { "type": "number" },
+        "feedCostTotal": { "type": "number" },
+        "medCostTotal": { "type": "number" },
+        "otherCostTotal": { "type": "number" },
+        "revenueTotal": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "sold_out"] },
+        "healthStatus": { "type": "string", "enum": ["healthy", "monitoring", "sick"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "batchCode", "name", "entryDate", "birthDate", "initialCount", "currentCount", "status", "healthStatus", "createdBy", "createdAt", "updatedAt"]
+    },
+    "HealthLog": {
+      "title": "HealthLog",
+      "description": "Health check, vaccination record, and abnormal clinical symptom note.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "targetType": { "type": "string", "enum": ["sow", "group"] },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "targetLabel": { "type": "string", "maxLength": 140 },
+        "logType": { "type": "string", "enum": ["vaccination", "symptom", "treatment", "checkup"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "vaccineName": { "type": "string", "maxLength": 140 },
+        "symptoms": { "type": "string", "maxLength": 800 },
+        "severity": { "type": "string", "enum": ["normal", "warning", "critical"] },
+        "medicineUsed": { "type": "string", "maxLength": 140 },
+        "dosage": { "type": "string", "maxLength": 100 },
+        "cost": { "type": "number" },
+        "date": { "type": "string", "maxLength": 32 },
+        "nextDueDate": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "monitoring", "resolved"] },
+        "notes": { "type": "string", "maxLength": 800 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "targetType", "targetId", "targetLabel", "logType", "title", "severity", "date", "status", "createdBy", "createdAt", "updatedAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Warehouse item for feed, medicine, vaccine, or farm supplies.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "sku": { "type": "string", "maxLength": 60 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "category": { "type": "string", "enum": ["feed", "medicine", "vaccine", "supply"] },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "quantity": { "type": "number" },
+        "minThreshold": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "supplier": { "type": "string", "maxLength": 140 },
+        "expiryDate": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "name", "category", "unit", "quantity", "minThreshold", "unitCost", "createdBy", "createdAt", "updatedAt"]
+    },
+    "InventoryTx": {
+      "title": "InventoryTx",
+      "description": "Stock-in or stock-out warehouse transaction.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "itemId": { "type": "string", "maxLength": 128 },
+        "itemName": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "enum": ["feed", "medicine", "vaccine", "supply"] },
+        "txType": { "type": "string", "enum": ["in", "out"] },
+        "quantity": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "targetGroupId": { "type": "string", "maxLength": 128 },
+        "targetLabel": { "type": "string", "maxLength": 140 },
+        "date": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "itemId", "itemName", "category", "txType", "quantity", "totalCost", "date", "createdBy", "createdAt", "updatedAt"]
+    },
+    "FinancialTx": {
+      "title": "FinancialTx",
+      "description": "Financial income or expense transaction including pig sales and breeding imports.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "txType": { "type": "string", "enum": ["sale_fattening", "sale_breeding", "purchase_breeding", "feed_expense", "medicine_expense", "labor_expense", "utility_expense", "other_income", "other_expense"] },
+        "direction": { "type": "string", "enum": ["income", "expense"] },
+        "date": { "type": "string", "maxLength": 32 },
+        "groupId": { "type": "string", "maxLength": 128 },
+        "groupLabel": { "type": "string", "maxLength": 140 },
+        "headCount": { "type": "number" },
+        "totalWeightKg": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "amount": { "type": "number" },
+        "partnerName": { "type": "string", "maxLength": 160 },
+        "notes": { "type": "string", "maxLength": 600 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "txType", "direction", "date", "amount", "createdBy", "createdAt", "updatedAt"]
+    },
+    "CloudBackup": {
+      "title": "CloudBackup",
+      "description": "Automated daily or manual cloud backup snapshot.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "dateKey": { "type": "string", "maxLength": 32 },
+        "backupType": { "type": "string", "enum": ["auto_daily", "manual"] },
+        "summaryCounts": { "type": "object" },
+        "snapshot": { "type": "object" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "dateKey", "backupType", "summaryCounts", "createdBy", "createdAt"]
+    },
+    "JournalEntry": {
+      "title": "JournalEntry",
+      "description": "Daily farm operation and observation journal entry supporting voice dictation and manual notes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "timeLabel": { "type": "string", "maxLength": 16 },
+        "category": { "type": "string", "enum": ["health", "weather", "feed", "hygiene", "other"] },
+        "severity": { "type": "string", "enum": ["normal", "warning", "critical"] },
+        "inputMethod": { "type": "string", "enum": ["voice", "text"] },
+        "content": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "date", "category", "severity", "inputMethod", "content", "createdBy", "createdAt", "updatedAt"]
+    },
+    "PigLitter": {
+      "title": "PigLitter",
+      "description": "Suckling piglet litter tracked per breeding sow from farrowing until weaning.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "farmId": { "type": "string", "maxLength": 128 },
+        "farmOwnerId": { "type": "string", "maxLength": 128 },
+        "sowId": { "type": "string", "maxLength": 128 },
+        "sowEarTag": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "litterCode": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "parity": { "type": "number" },
+        "barnName": { "type": "string", "maxLength": 100 },
+        "farrowingDate": { "type": "string", "maxLength": 32 },
+        "expectedWeaningDate": { "type": "string", "maxLength": 32 },
+        "liveBorn": { "type": "number" },
+        "currentCount": { "type": "number" },
+        "mortalityCount": { "type": "number" },
+        "avgWeightKg": { "type": "number" },
+        "healthStatus": { "type": "string", "enum": ["healthy", "monitoring", "sick"] },
+        "status": { "type": "string", "enum": ["suckling", "weaned"] },
+        "weanedDate": { "type": "string", "maxLength": 32 },
+        "weanedCount": { "type": "number" },
+        "weanedGroupId": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 800 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "farmId", "farmOwnerId", "sowId", "sowEarTag", "litterCode", "parity", "farrowingDate", "liveBorn", "currentCount", "healthStatus", "status", "createdBy", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile and active farm pointer."
+    },
+    "/farms/{farmId}": {
+      "schema": { "$ref": "#/entities/Farm" },
+      "description": "Farm root document and configuration."
+    },
+    "/farms/{farmId}/staff/{staffId}": {
+      "schema": { "$ref": "#/entities/StaffMember" },
+      "description": "Staff RBAC assignments under a farm."
+    },
+    "/farms/{farmId}/barns/{barnId}": {
+      "schema": { "$ref": "#/entities/Barn" },
+      "description": "Barn/pen configurations under a farm."
+    },
+    "/farms/{farmId}/breeds/{breedId}": {
+      "schema": { "$ref": "#/entities/Breed" },
+      "description": "Pig breeds under a farm."
+    },
+    "/farms/{farmId}/vaccines/{vaccineId}": {
+      "schema": { "$ref": "#/entities/Vaccine" },
+      "description": "Vaccine protocols under a farm."
+    },
+    "/farms/{farmId}/feedTypes/{feedTypeId}": {
+      "schema": { "$ref": "#/entities/FeedType" },
+      "description": "Feed ration specifications under a farm."
+    },
+    "/farms/{farmId}/feedRations/{rationId}": {
+      "schema": { "$ref": "#/entities/FeedRation" },
+      "description": "Weekly feed rations by pig category and age/gestation/lactation week."
+    },
+    "/farms/{farmId}/vaccinationPrograms/{programId}": {
+      "schema": { "$ref": "#/entities/VaccinationProgram" },
+      "description": "Standard vaccination program rules by pig category and week."
+    },
+    "/farms/{farmId}/sows/{sowId}": {
+      "schema": { "$ref": "#/entities/Sow" },
+      "description": "Individual breeding sows under a farm."
+    },
+    "/farms/{farmId}/sowEvents/{eventId}": {
+      "schema": { "$ref": "#/entities/SowEvent" },
+      "description": "Auto-generated and logged reproductive workflow events for sows."
+    },
+    "/farms/{farmId}/pigGroups/{groupId}": {
+      "schema": { "$ref": "#/entities/PigGroup" },
+      "description": "Fattening pig groups under a farm."
+    },
+    "/farms/{farmId}/healthLogs/{logId}": {
+      "schema": { "$ref": "#/entities/HealthLog" },
+      "description": "Vaccination, checkup, and abnormal symptom logs."
+    },
+    "/farms/{farmId}/inventoryItems/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Feed, medicine, vaccine, and supply warehouse items."
+    },
+    "/farms/{farmId}/inventoryTx/{txId}": {
+      "schema": { "$ref": "#/entities/InventoryTx" },
+      "description": "Inventory stock-in and stock-out history."
+    },
+    "/farms/{farmId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/FinancialTx" },
+      "description": "Revenue, pig sales, breeding imports, and operational expense transactions."
+    },
+    "/farms/{farmId}/backups/{backupId}": {
+      "schema": { "$ref": "#/entities/CloudBackup" },
+      "description": "Automatic daily and manual cloud backup snapshots."
+    },
+    "/farms/{farmId}/journalEntries/{entryId}": {
+      "schema": { "$ref": "#/entities/JournalEntry" },
+      "description": "Daily farm journal notes captured via voice or manual text."
+    },
+    "/farms/{farmId}/pigLitters/{litterId}": {
+      "schema": { "$ref": "#/entities/PigLitter" },
+      "description": "Suckling piglet litters linked to individual breeding sows."
+    }
+  }
+}
